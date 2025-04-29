@@ -30,7 +30,7 @@
 
 ### copy_thread
 
-除系统自举时的0号进程外，新创建的线程/进程，都会从ret_from_kernel_thread/ret_from_fork开始执行。
+除系统自举时的0号进程外，新创建的线程/进程，都会从`ret_from_kernel_thread`/`ret_from_fork`开始执行。
 
 （进程/线程的开始执行，都是从`switch_to`()开始；switch后新的**ra寄存器**的值，使函数返回到新的线程。同时**tp**也更新为新的`task_struct`的地址）
 
@@ -90,9 +90,37 @@
 
 ### -> kernel_execve
 
-![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_11e2a61d68b178aa.png)
+![image-20250502222710889](./.02_init_PID1_process/image-20250502222710889.png)
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_40a0445503958eff.png)
+
+
+
+### alloc_bprm
+
+![image-20250501231917333](./.02_init_PID1_process/image-20250501231917333.png)
+
+
+
+#### bprm_mm_init
+
+![image-20250501232008577](./.02_init_PID1_process/image-20250501232008577.png)
+
+
+
+#### __bprm_mm_init
+
+![image-20250501232406670](./.02_init_PID1_process/image-20250501232406670.png)
+
+
+
+### bprm_stack_limits
+
+![image-20250501231643008](./.02_init_PID1_process/image-20250501231643008.png)
+
+
+
+### bprm_execve
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_b2555a6d433b1b86.png)
 
@@ -128,7 +156,7 @@
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_9df6c8649d4b0484.png)
 
-![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_f0c4a2c8b2e3af0f.png)
+![image-20250501231028487](./.02_init_PID1_process/image-20250501231028487.png)
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_358a2cf60189426.png)
 
@@ -138,7 +166,7 @@
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_a1775901031c1ce3.png)
 
-![img](file:///tmp/lu1665154gtayhq.tmp/lu1665154gtayhv_tmp_32bf854c05ec7891.png)
+![image-20250501194409212](./.02_init_PID1_process/image-20250501194409212.png)
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_43220fdbbc62f2bf.png)
 
@@ -163,6 +191,38 @@
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_cc043dcddfd2620f.png)
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_204c9b44f6f15c52.png)
+
+
+
+
+
+### begin_new_exec
+
+![image-20250501193719629](./.02_init_PID1_process/image-20250501193719629.png)
+
+![image-20250501193742524](./.02_init_PID1_process/image-20250501193742524.png)
+
+![image-20250501193815629](./.02_init_PID1_process/image-20250501193815629.png)
+
+![image-20250501193843294](./.02_init_PID1_process/image-20250501193843294.png)
+
+
+
+### setup_arg_pages
+
+![image-20250501230806959](./.02_init_PID1_process/image-20250501230806959.png)
+
+![image-20250501231307775](./.02_init_PID1_process/image-20250501231307775.png)
+
+![image-20250501230919874](./.02_init_PID1_process/image-20250501230919874.png)
+
+
+
+### setup_new_exec
+
+![image-20250501193959933](./.02_init_PID1_process/image-20250501193959933.png)
+
+
 
 ### current_pt_regs()
 
@@ -190,7 +250,7 @@
 
 ### 初始sp
 
-从传给`start_thread`的参数可知，sp源于`bprm->p`
+从传给`start_thread`的参数可知，user sp源于`bprm->p`
 
 
 
@@ -200,9 +260,15 @@
 
 
 
+#### setup_arg_pages
+
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_96ce67227703621a.png)
 
 ![img](./.02_init_PID1_process/lu1665154gtayhv_tmp_eea87cb67e4b8f62.png)
+
+![image-20250429185200131](./.02_init_PID1_process/image-20250429185200131.png)
+
+![image-20250429185302157](./.02_init_PID1_process/image-20250429185302157.png)
 
 
 

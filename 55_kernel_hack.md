@@ -28,7 +28,7 @@ After adding `dump_stack()`, output shows function trace:
 
 What is this? seems very useful for kernel debugging
 
-This is the binutil tools
+This is the **binutil** tools
 
 
 

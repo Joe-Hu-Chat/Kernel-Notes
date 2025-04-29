@@ -1,275 +1,1033 @@
+通用调度器目标：
+
+- 交互任务响应快
+- 批处理任务吞吐量大
+- SMP高效多核，高cache和TLB命中率
 
 
-# wait
 
-## DEFINE_WAIT_FUNC
+# task scheduler
 
-![image-20240605145613635](./.05_kernel_sched/image-20240605145613635.png)
+An example for Data structure used for **fair** scheduler: 
 
-### `struct` wait_queue_entry
+![image-20250402221914974](./.05_kernel_sched/image-20250402221914974.png)
 
-![image-20240605150940300](./.05_kernel_sched/image-20240605150940300.png)
+Different kinds of processes:
 
-## woken_wake_function
+- **Real-time Process**: very high priority, response time smaller than Interactive Process (Real-time Processes nowadays are processes that actually have a Deadline for their completion time-windows, so they are in the **DL** schedule class)
 
-![image-20240605145350217](./.05_kernel_sched/image-20240605145350217.png)
+- **Interactive Process**: high priority (Interactive Processes need a "real-time" response, so they are classified in **RT** schedule class at the very early stage of OS development)
+- **Batch Process**: long time slice, low priority, falls into **fair** schedule class
 
-### default_wake_function
 
-![image-20240605151531364](./.05_kernel_sched/image-20240605151531364.png)
 
-### try_to_wake_up
+## scheduler entity
 
-```c
-/**
- * try_to_wake_up - wake up a thread
- * @p: the thread to be awakened
- * @state: the mask of task states that can be woken
- * @wake_flags: wake modifier flags (WF_*)
- *
- * Conceptually does:
- *
- *   If (@state & @p->state) @p->state = TASK_RUNNING.
- *
- * If the task was not queued/runnable, also place it back on a runqueue.
- *
- * This function is atomic against schedule() which would dequeue the task.
- *
- * It issues a full memory barrier before accessing @p->state, see the comment
- * with set_current_state().
- *
- * Uses p->pi_lock to serialize against concurrent wake-ups.
- *
- * Relies on p->pi_lock stabilizing:
- *  - p->sched_class
- *  - p->cpus_ptr
- *  - p->sched_task_group
- * in order to do migration, see its use of select_task_rq()/set_task_cpu().
- *
- * Tries really hard to only take one task_rq(p)->lock for performance.
- * Takes rq->lock in:
- *  - ttwu_runnable()    -- old rq, unavoidable, see comment there;
- *  - ttwu_queue()       -- new rq, for enqueue of the task;
- *  - psi_ttwu_dequeue() -- much sadness :-( accounting will kill us.
- *
- * As a consequence we race really badly with just about everything. See the
- * many memory barriers and their comments for details.
- *
- * Return: %true if @p->state changes (an actual wakeup was done),
- *	   %false otherwise.
- */
-static int
-try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
-{
-	unsigned long flags;
-	int cpu, success = 0;
-
-	preempt_disable();
-	if (p == current) {
-		/*
-		 * We're waking current, this means 'p->on_rq' and 'task_cpu(p)
-		 * == smp_processor_id()'. Together this means we can special
-		 * case the whole 'p->on_rq && ttwu_runnable()' case below
-		 * without taking any locks.
-		 *
-		 * In particular:
-		 *  - we rely on Program-Order guarantees for all the ordering,
-		 *  - we're serialized against set_special_state() by virtue of
-		 *    it disabling IRQs (this allows not taking ->pi_lock).
-		 */
-		if (!(p->state & state))
-			goto out;
-
-		success = 1;
-		trace_sched_waking(p);
-		p->state = TASK_RUNNING;
-		trace_sched_wakeup(p);
-		goto out;
-	}
-
-	/*
-	 * If we are going to wake up a thread waiting for CONDITION we
-	 * need to ensure that CONDITION=1 done by the caller can not be
-	 * reordered with p->state check below. This pairs with smp_store_mb()
-	 * in set_current_state() that the waiting thread does.
-	 */
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	smp_mb__after_spinlock();
-	if (!(p->state & state))
-		goto unlock;
-
-	trace_sched_waking(p);
-
-	/* We're going to change ->state: */
-	success = 1;
-
-	/*
-	 * Ensure we load p->on_rq _after_ p->state, otherwise it would
-	 * be possible to, falsely, observe p->on_rq == 0 and get stuck
-	 * in smp_cond_load_acquire() below.
-	 *
-	 * sched_ttwu_pending()			try_to_wake_up()
-	 *   STORE p->on_rq = 1			  LOAD p->state
-	 *   UNLOCK rq->lock
-	 *
-	 * __schedule() (switch to task 'p')
-	 *   LOCK rq->lock			  smp_rmb();
-	 *   smp_mb__after_spinlock();
-	 *   UNLOCK rq->lock
-	 *
-	 * [task p]
-	 *   STORE p->state = UNINTERRUPTIBLE	  LOAD p->on_rq
-	 *
-	 * Pairs with the LOCK+smp_mb__after_spinlock() on rq->lock in
-	 * __schedule().  See the comment for smp_mb__after_spinlock().
-	 *
-	 * A similar smb_rmb() lives in try_invoke_on_locked_down_task().
-	 */
-	smp_rmb();
-	if (READ_ONCE(p->on_rq) && ttwu_runnable(p, wake_flags))
-		goto unlock;
-
-#ifdef CONFIG_SMP
-	/*
-	 * Ensure we load p->on_cpu _after_ p->on_rq, otherwise it would be
-	 * possible to, falsely, observe p->on_cpu == 0.
-	 *
-	 * One must be running (->on_cpu == 1) in order to remove oneself
-	 * from the runqueue.
-	 *
-	 * __schedule() (switch to task 'p')	try_to_wake_up()
-	 *   STORE p->on_cpu = 1		  LOAD p->on_rq
-	 *   UNLOCK rq->lock
-	 *
-	 * __schedule() (put 'p' to sleep)
-	 *   LOCK rq->lock			  smp_rmb();
-	 *   smp_mb__after_spinlock();
-	 *   STORE p->on_rq = 0			  LOAD p->on_cpu
-	 *
-	 * Pairs with the LOCK+smp_mb__after_spinlock() on rq->lock in
-	 * __schedule().  See the comment for smp_mb__after_spinlock().
-	 *
-	 * Form a control-dep-acquire with p->on_rq == 0 above, to ensure
-	 * schedule()'s deactivate_task() has 'happened' and p will no longer
-	 * care about it's own p->state. See the comment in __schedule().
-	 */
-	smp_acquire__after_ctrl_dep();
-
-	/*
-	 * We're doing the wakeup (@success == 1), they did a dequeue (p->on_rq
-	 * == 0), which means we need to do an enqueue, change p->state to
-	 * TASK_WAKING such that we can unlock p->pi_lock before doing the
-	 * enqueue, such as ttwu_queue_wakelist().
-	 */
-	p->state = TASK_WAKING;
-
-	/*
-	 * If the owning (remote) CPU is still in the middle of schedule() with
-	 * this task as prev, considering queueing p on the remote CPUs wake_list
-	 * which potentially sends an IPI instead of spinning on p->on_cpu to
-	 * let the waker make forward progress. This is safe because IRQs are
-	 * disabled and the IPI will deliver after on_cpu is cleared.
-	 *
-	 * Ensure we load task_cpu(p) after p->on_cpu:
-	 *
-	 * set_task_cpu(p, cpu);
-	 *   STORE p->cpu = @cpu
-	 * __schedule() (switch to task 'p')
-	 *   LOCK rq->lock
-	 *   smp_mb__after_spin_lock()		smp_cond_load_acquire(&p->on_cpu)
-	 *   STORE p->on_cpu = 1		LOAD p->cpu
-	 *
-	 * to ensure we observe the correct CPU on which the task is currently
-	 * scheduling.
-	 */
-	if (smp_load_acquire(&p->on_cpu) &&
-	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags | WF_ON_CPU))
-		goto unlock;
-
-	/*
-	 * If the owning (remote) CPU is still in the middle of schedule() with
-	 * this task as prev, wait until its done referencing the task.
-	 *
-	 * Pairs with the smp_store_release() in finish_task().
-	 *
-	 * This ensures that tasks getting woken will be fully ordered against
-	 * their previous state and preserve Program Order.
-	 */
-	smp_cond_load_acquire(&p->on_cpu, !VAL);
-
-	cpu = select_task_rq(p, p->wake_cpu, SD_BALANCE_WAKE, wake_flags);
-	if (task_cpu(p) != cpu) {
-		if (p->in_iowait) {
-			delayacct_blkio_end(p);
-			atomic_dec(&task_rq(p)->nr_iowait);
-		}
-
-		wake_flags |= WF_MIGRATED;
-		psi_ttwu_dequeue(p);
-		set_task_cpu(p, cpu);
-	}
-#else
-	cpu = task_cpu(p);
-#endif /* CONFIG_SMP */
-
-	ttwu_queue(p, cpu, wake_flags);
-unlock:
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-out:
-	if (success)
-		ttwu_stat(p, task_cpu(p), wake_flags);
-	preempt_enable();
-
-	return success;
-}
+Sched Objects: （调度实体）
+```
+- struct sched_entity se; # CFS
+- struct sched_rt_entity rt; # RT
+- struct sched_dl_entity dl; # DL (DeadLine)
 ```
 
 
 
-## add_wait_queue
+### struct sched_dl_entity
 
-![image-20240605145043244](./.05_kernel_sched/image-20240605145043244.png)
+`/* file: include/linux/sched.h */`
 
-### struct wait_queue_head
+![image-20250508111647253](./.05_kernel_sched/image-20250508111647253.png)
 
-![image-20240605151054500](./.05_kernel_sched/image-20240605151054500.png)
+![image-20250504191814475](./.05_kernel_sched/image-20250504191814475.png)
 
-### __add_wait_queue
+![image-20250504191839903](./.05_kernel_sched/image-20250504191839903.png)
+
+![image-20250504191855862](./.05_kernel_sched/image-20250504191855862.png)
+
+
+
+### struct sched_rt_entity
+
+![image-20250506201022391](./.05_kernel_sched/image-20250506201022391.png)
+
+
+
+### struct sched_entity
+
+`/* file: include/linux/sched.h */`
+
+![image-20250509151037471](./.05_kernel_sched/image-20250509151037471.png)
+
+![image-20250504191559479](./.05_kernel_sched/image-20250504191559479.png)
+
+
+
+### struct sched_ext_entity
+
+`/* include/linux/sched/ext.h */`
+
+![image-20250506201512882](./.05_kernel_sched/image-20250506201512882.png)
+
+![image-20250506201713417](./.05_kernel_sched/image-20250506201713417.png)
+
+
+
+## sched_class
+
+sched_class:（调度类）
+
+- `stop_sched_class` # In SMP architecture, used to stop other task on a CPU, then **stop the CPU**
+- `dl_sched_class` # Used for tasks needed to finish in a **time window**, highest priority for user tasks
+- `rt_sched_class` # Real-time tasks, related to **user interaction**, priority lover than DL
+- `fair_sched_class` # Used for most tasks, to fairly allocate CPU time to tasks, like **CFS**
+- `idle_sched_class` # Similar to stop class, only for kernel threads, lowest priority, to lower power consumption when **CPU idle**
+
+
+
+`/* file: include/asm-generic/vmlinux.lds.h */`
+
+![image-20250402175719236](./.05_kernel_sched/image-20250402175719236.png)
+
+The implementation above is in v5.10 kernel code. The newest layout changes and the range names are changed to `highest` and `lowest` too, to make it clearer.
+
+![image-20250504181148061](./.05_kernel_sched/image-20250504181148061.png)
+
+
+
+### struct sched_class
+
+![image-20250504182511093](./.05_kernel_sched/image-20250504182511093.png)
+
+![image-20250504182553430](./.05_kernel_sched/image-20250504182553430.png)
+
+
+
+#### **DEFINE_SCHED_CLASS**
+
+/* file: kernel/sched/sched.h */
+
+![image-20250504181727870](./.05_kernel_sched/image-20250504181727870.png)
+
+
+
+### stop_sched_class
+
+`/* file: kernel/sched/stop_task.c */`
+
+![image-20250506195257499](./.05_kernel_sched/image-20250506195257499.png)
+
+
+
+### dl_sched_class
+
+`/* file: kernel/sched/deadline.c */`
+
+![image-20250504182225095](./.05_kernel_sched/image-20250504182225095.png)
+
+
+
+### rt_sched_class
+
+`/* file: kernel/sched/rt.c */`
+
+![image-20250506195226927](./.05_kernel_sched/image-20250506195226927.png)
+
+
+
+### fair_sched_class
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250506194929405](./.05_kernel_sched/image-20250506194929405.png)
+
+![image-20250506194949127](./.05_kernel_sched/image-20250506194949127.png)
+
+
+
+#### task_tick_fair
+
+![image-20250509113301083](./.05_kernel_sched/image-20250509113301083.png)
+
+
+
+### idle_sched_class
+
+`/* file: kernel/sched.idle.c */`
+
+![image-20250506195144114](./.05_kernel_sched/image-20250506195144114.png)
+
+
+
+### ext_sched_class
+
+`/* file: kernel/sched/ext.c */`
+
+![image-20250506194845921](./.05_kernel_sched/image-20250506194845921.png)
+
+![image-20250506194801995](./.05_kernel_sched/image-20250506194801995.png)
+
+
+
+
+
+## pick_next_task
+
+Implementation of scheduler, which will be called before swapping (/preempting), to choose the next task to switch to.
+
+`/* file: kernel/sched/core.c */`
+
+![image-20250504175723718](./.05_kernel_sched/image-20250504175723718.png)
+
+
+
+**for_each_class**
+
+![image-20250504191112142](./.05_kernel_sched/image-20250504191112142.png)
+
+![image-20250504191044561](./.05_kernel_sched/image-20250504191044561.png)
+
+
+
+### pick_next_task_fair
+
+![image-20250508120743310](./.05_kernel_sched/image-20250508120743310.png)
+
+![image-20250507182635171](./.05_kernel_sched/image-20250507182635171.png)
+
+![image-20250507182658324](./.05_kernel_sched/image-20250507182658324.png)
+
+
+
+#### pick_task_fair
+
+`/* file: kernelj/sched/fair.c */`
+
+![image-20250526220106502](./.05_kernel_sched/image-20250526220106502.png)
+
+
+
+##### pick_next_entity
+
+![image-20250525132552505](./.05_kernel_sched/image-20250525132552505.png)
+
+
+
+##### pick_eevdf
+
+How the heap and RB-tree are compatible, how is the relationship between `min_vruntime` and `virtual deadline`.
+
+![image-20250526221706432](./.05_kernel_sched/image-20250526221706432.png)
+
+![image-20250530214611655](./.05_kernel_sched/image-20250530214611655.png)
+
+
+
+##### entity_eligible
+
+![image-20250601191648089](./.05_kernel_sched/image-20250601191648089.png)
+
+![image-20250601192034350](./.05_kernel_sched/image-20250601192034350.png)
+
+
+
+#### put_prev_set_next_task
+
+![image-20250507182753416](./.05_kernel_sched/image-20250507182753416.png)
+
+
+
+#### __put_prev_set_next_dl_server
+
+![image-20250507182912536](./.05_kernel_sched/image-20250507182912536.png)
+
+
+
+#### put_prev_task_fair
+
+![image-20250507183934752](./.05_kernel_sched/image-20250507183934752.png)
+
+
+
+The macro `for_each_sched_entity` is only effective with `CONFIG_FAIR_GROUP_SCHED`.
+
+![image-20250507211639979](./.05_kernel_sched/image-20250507211639979.png)
+
+
+
+##### put_prev_entity
+
+![image-20250507184058316](./.05_kernel_sched/image-20250507184058316.png)
+
+
+
+#### set_next_task_fair
+
+![image-20250507194438451](./.05_kernel_sched/image-20250507194438451.png)
+
+
+
+##### set_next_entity
+
+![image-20250507211433048](./.05_kernel_sched/image-20250507211433048.png)
+
+
+
+## struct rq
+
+`rq`是系统可运行任务的容器，调度器的很多工作都是围绕着`rq`来进行的，调度类`struct sched_class`所申明的函数中，绝大多数都与`rq`相关。在系统中，每个CPU都有一个自己的`rq`，这样就可以避免多个CPU访问同一个`rq`产生的并发问题，提升调度器效率。
+
+runqueue: 就续队列
+
+The core of a runqueue, is presumably including:
 
 ```c
-static inline void __add_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
-{
-	list_add(&wq_entry->entry, &wq_head->head);
-}
+/* sub-rq for these schedule classes */
+struct cfs_rq cfs;
+struct rt_rq rt;
+struct dl_rq dl;
+struct scx_rq scx;
+
+/* Only one task for stop schedule class and idle schedule class */
+struct task_struct *idle;
+struct task_struct *stop;
 ```
 
 
 
-## wait_woken
+`/* file: kernel/sched/sched.h */`
 
-![image-20240605145205719](./.05_kernel_sched/image-20240605145205719.png)
+![image-20250507221718325](./.05_kernel_sched/image-20250507221718325.png)
 
-`schedule_timeout` will sleep until timeout, or woken up by signals if `TASK_INTERRUPTIBLE` flag was set by `set_current_state()`.  See `preemption` doc for explanation about scheduling.
+![image-20250509114124932](./.05_kernel_sched/image-20250509114124932.png)
+
+![image-20250506154425360](./.05_kernel_sched/image-20250506154425360.png)
+
+![image-20250506154455569](./.05_kernel_sched/image-20250506154455569.png)
+
+![image-20250506154524740](./.05_kernel_sched/image-20250506154524740.png)
+
+![image-20250506154539643](./.05_kernel_sched/image-20250506154539643.png)
 
 
 
-# wait queue
+### struct dl_rq
+
+![image-20250508112924301](./.05_kernel_sched/image-20250508112924301.png)
+
+![image-20250506160808669](./.05_kernel_sched/image-20250506160808669.png)
 
 
 
-![image-20240605154616521](./.05_kernel_sched/image-20240605154616521.png)
+### struct rt_rq
 
-## waitqueue_active
+![image-20250506162001504](./.05_kernel_sched/image-20250506162001504.png)
 
-![image-20240605154913879](./.05_kernel_sched/image-20240605154913879.png)
 
-## __wake_up
 
-![image-20240605154517268](./.05_kernel_sched/image-20240605154517268.png)
+#### rt_prio_array
+
+![image-20250506161921855](./.05_kernel_sched/image-20250506161921855.png)
+
+
+
+### struct cfs_rq
+
+![image-20250525124236521](./.05_kernel_sched/image-20250525124236521.png)
+
+![image-20250506160420997](./.05_kernel_sched/image-20250506160420997.png)
+
+![image-20250506160449845](./.05_kernel_sched/image-20250506160449845.png)
+
+
+
+#### rb_root_cached
+
+带缓存的红黑树只是一个常规的`rb_root`，加上一个额外的指针来缓存最左边的节点。这使得rb_root_cached可以存在于rb_root存在的任何地方，并且只需增加几个接口来支持带缓存的树
+
+`/* file: include/linux/rbtree_types.h */`
+
+![image-20250507213518273](./.05_kernel_sched/image-20250507213518273.png)
+
+![image-20250507213549712](./.05_kernel_sched/image-20250507213549712.png)
+
+![image-20250507213625157](./.05_kernel_sched/image-20250507213625157.png)
+
+
+
+### struct scx_rq
+
+![image-20250506160522668](./.05_kernel_sched/image-20250506160522668.png)
+
+
+
+## schedule policy
+
+
+
+Sched Policy: （调度策略）
+
+- `stop_sched_class`: only one task, no sched policy
+- `dl_sched_class`: one policy, `SCHED_DEADLINE`
+- `rt_sched_class`: 
+  - `SCHED_FIFO`, 一直运行到主动放弃CPU
+  - `SCHED_RR` 同优先级任务按照时间配额交替运行
+- `fair_sched_class`: 
+  - `SCHED_NORMAL`, 用于绝大多数用户进程
+  - `SCHED_BATCH`, 用于没有交互行为的后台进程，在完成所有`SCHED_NORAML`的任务后，让该类任务不受打扰地跑上一段时间，以最大限度利用缓存
+  - `SCHED_IDLE` 优先级最低任务，只有没有其它任何任务可运行时，调度器才运行该类任务
+- `idle_sched_class`: same as `stop`, no sched policy
+
+每个进程在创建时都会指定一个**调度策略**，从而自动归结到某个**调度类**下。
+
+
+
+`/* file: include/uapi/linux/sched.h */`
+
+![image-20250504193232984](./.05_kernel_sched/image-20250504193232984.png)
+
+
+
+### DL
+
+Deadline 任务有三个重要的属性：runtime, period, deadline，调度器需要确保任务在每个period的时间窗口内得到runtime这么多的CPU时间，并且必须在deadline这个时间点之前得到。
+
+EDF (Earliest Deadline First)，即在任意时刻，调度器都选择Deadline最近的任务执行。
+
+```bash
+chrt -d --sched-runtime 500000 --sched-deadline 1000000 \
+	--sched-period 1666666 0 video_processing_tool
+```
+
+
+
+#### CBS
+
+`scheduling_deadline`：子任务的deadline
+
+`remaining_runtime`：在当前period，子任务还剩多少runtime可用
+
+
+
+**CBS check**:
+
+`scheduling_deadline < now` check deadline
+
+`remaining_runtime / (scheduling_deadline - now) > runtime / period` check bandwidth
+
+
+
+**postpone task** for one period and update states:
+
+`scheduling_deadline = now + deadline`
+
+`remaining_runtime = runtime`
+
+
+
+**throttled**:
+
+`remaining_runtime <= 0` will be throttled by scheduler
+
+Then replenished at `scheduling_deadline`, i.e., next `period`. This time is then called `replenishment time`
+
+`scheduling_deadline = scheduling_deadline + period`
+
+`remaining_runtime = remaining_runtime + runtime`
+
+
+
+### CFS
+
+Completely Fair Scheduler
+
+CFS吸取了RSDL中关于公平调度的思想，着力于改善调度器在**交互性**与**公平性**两方面的性能。调度器抛弃了基于时间片来划分调度周期的做法，引入了`vruntime`（虚拟时间）的概念来度量公平，并使用**红黒树**来管理任务。
+
+- 现实中绝对公平几乎不可能实现，调度器维持公平性就是去除掉不公平性（维持所有任务的`vruntime`尽可能相等）。
+- 公平(fair)调度器的目标是每个进程得到**同样多的CPU时间**，因此调度器每次调度时都选择runtime最小的进程。
+- 优先级较高的进程应该得到更多的CPU时间，因此更高的**优先级**（低**nice**值）可以转化为更大的**CPU时间比例**（即时间权重）。
+- 权重比例刻画公平性，对比实际使用时间片的比例比与权重是比例的差异来确定不公平性，来调度。
+- 虚拟时间（vitrual runtime）是runtime除以**权重**是比例的**归一化数值**，即`vruntime`。
+  - `vruntime = (wall_time / (weight / NICE_0_LOAD))`
+  - `vruntime = (wall_time * (NICE_0_LOAD * 2^32) / weight)) >> 32 `
+  - `vruntime = (wall_time * NICE_0_LOAD * inv_weight) >> 32`
+  
+- 归一化后，`cfs_rq`中使用`vruntime`作为key值的红黑树来保存所有的任务，最左侧节点的任务就是调度器应该选择的任务。
+
+
+
+
+
+#### sched_latency
+
+为了**调度延迟**，即一个任务在两次被调度到的时间间隔，CFS也需要引入**调度周期**（`sched_latency`）。
+
+有了调度周期后（`__sched_period()`），还需要为任务计算其在一个调度周期内的时间配额（slice），`sched_slice()`。
+
+Schedule latency is the duration in which all runable processes are expected to be scheduled at least once. It defines the "scheduling period" during which the CPU time is divided fairly among all runable tasks.
+
+Schedule period: effective latency
+
+
+
+What is lacking is a way to ensure that some processes can get accesss to a CPU quickly without necessarily giving those processes the ability to obtain more than their fair share of CPU time. (https://lwn.net/Articles/925371/)
+
+
+
+##### time slice
+
+time slice for CFS scheduler research
+
+The schedule latency defines the time frame in which all tasks should be sheduled, and the timeslice per task is derived from dividing this latency by the number of tasks, respecting the **minimum granularity**.
+
+This mechanism balances **fairness** (all tasks get CPU time within latency) and **efficiency** (avoid too frequent preemption)
+
+
+
+##### minimum granularity
+
+When the number of runnable tasks grows large, the scheduler period (effective latency) increases because each task must get at least the **mininum granularity**. The formula used is:
+
+- If number of runable tasks <= `sched_latency_ns / sched_min_granularity_ns`, then scheduling period = `sched_latency_ns`
+- Else, scheduling period = number of runnable tasks `x` `sched_min_granularity_ns`
+
+This ensures that each task gets a fair minimum CPU slice, preventing too frequent context switches.
+
+
+
+##### Handling New/Waking Tasks
+
+This is **critial** as it's normal for tasks to go to sleep or wait for some resources and then they will wake up later. Newly created tasks usually expect to execute quickly to be responsive, but it shouldn't occupy CPU too long to starve other runnables.
+
+
+
+#### EEVDF scheduler
+
+Earliest Eligible **Virtual Deadline** First, A newer scheduler variant alongside CFS
+
+The `commit` adding this implementation is `git show 147f3efaa241`
+
+
+
+EEVDF picks task with `lag` greater or equal to zero and calculates a virtual deadline (**VD**) for each, selecting the task with the earliest VD to execute next.
+
+It aims to improve fairness, **responsiveness**, and scalability while addressing **limitations** in CFS.
+
+Tick driven preemption is driven by `request/slice` completion; 
+
+while wakeup preemption is driven by the `deadline`.
+
+
+
+**virtual `deadline`**
+
+The other factor that comes into play is the "virtual deadline", which is the ~~earliest~~ time by which a process should have received its due CPU time. This deadline is calculated by adding a process's allocated time slice to its **eligible time**. A process with a 10ms time slice, and whose eligible time is 20ms in the future, will have a virtual deadline that is 30ms in the future.
+
+A task is deemed "**eligible**" if its lag value is zero or greater; whenever the CPU scheduler must pick a task to run, it chooses from the set of eligible tasks. **eligible time** is the virtual **runtime of an eligible task**.
+
+`deadline = vruntime + (slice / weight) * total_weight`  ?
+
+Deadline is the time when a process should have received its due CPU timeslice, while all other processess get their partitions too. (This is why it multiplies the **total_weight** after being normalized)
+
+
+
+
+
+**virtual `lag`**
+
+Imagine a time period of one second; during that time, in our five-process scenario, each process should have gotten 200ms of CPU time. For a number of reasons, things never turn out exactly that way; some processes will have gotten too much time, while others will have been shortchanged. For each process, EEVDF calculates the difference between the time that process **should** have gotten and how much it **actually** got; that difference is called "lag". A process with a positive lag value has not received its fair share and should be scheduled sooner than one with a negative lag value.
+
+The `lag` value is calculated over the normalized virtual runtime, since its easier to get the target virtual runtime (`rq.avg_vruntime`) for tasks in `runqueue`:
+
+`se.vlag = rq.avg_vruntime - se.vruntime`
+
+
+
+**Normalized** virtual runtime is the key dimension in CFS scheduler:
+
+`se.vruntime = runtime / weight`
+
+`se.vruntime += timeslice / weight`
+
+`weight = load_weight.weight / NICE_0_LOAD`
+
+`weight` is the **weight** of an entity. It is used to normalize the `runtime` from entities with different time weights. (`NICE_0_LOAD` is the weight of a default-priority task)
+
+
+
+`runtime`s are supposed to be **evenly** separated to all entities in `runqueue`, so the `rq.avg_vruntime` means the **normalized** virtual runtime should be entitled to each task:
+
+`rq.avg_vruntime = total_runtimes / total_weights`
+
+`total_weights` is **sum of weights** of all runnable tasks in the runqueue.
+
+`total_runtimes` is **sum of runtimes** the runqueue having gone through.
+
+
+
+The sum of all the `lag` values in the system is always zero.
+
+`lag = se.vlag * (weight)`
+
+`weight` is the **weight** of an entity.
+
+```
+0 = sum of lags 
+= sum of ((rq.avg_vruntime - se.vruntime) * weight)s
+= sum of ((total_runtimes / total_weights - runtime / weight) * weight)s
+= sum of ((total_runtimes * weight / total_weights - runtime)s
+= sum of (total_runtimes * weight / total_weights)s - sum of runtimes
+= total_runtimes * (sum of (weight / total_weights)s - 1)
+= total_runtimes * (sum of (weight)s / total_weights - 1)
+
+sum of (weight)s = sum of weights in runqueue = total_weights
+```
+
+
+
+```
+0 = sum of vlags ?
+= sum of (rq.avg_vruntime - se.vruntime)s
+= sum of ((total_runtimes) / (total_weights) - runtime / weight)s
+= n * (total_runtimes) / (total_weights) - sum of (runtime / weight)s
+```
+
+
+
+
+
+
+
+a scheduler includes: base scheduler, placement, preemption, picking
+
+
+
+##### limitations in CFS
+
+To figure out the reason why EEVDF was involved in CFS!
+
+Corner cases: task groups starving under load
+
+heterogeneous workloads: mixed CPU-bound/I/O-bounds tasks
+
+low-latency scheduling for time-sensitive applications
+
+
+
+
+
+##### sched_setattr
+
+`/* file: kernel/sched/syscalls.c */`
+
+![image-20250517120551669](./.05_kernel_sched/image-20250517120551669.png)
+
+
+
+##### __setparam_fair
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250517120151062](./.05_kernel_sched/image-20250517120151062.png)
+
+
+
+
+
+##### sysctl_sched_base_slice
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250519222613136](./.05_kernel_sched/image-20250519222613136.png)
+
+
+
+![image-20250520144002638](./.05_kernel_sched/image-20250520144002638.png)
+
+
+
+![image-20250520120324883](./.05_kernel_sched/image-20250520120324883.png)
+
+![image-20250520120412672](./.05_kernel_sched/image-20250520120412672.png)
+
+
+
+![image-20250520122536609](./.05_kernel_sched/image-20250520122536609.png)
+
+![image-20250520122156843](./.05_kernel_sched/image-20250520122156843.png)
+
+
+
+##### sched_init_debug
+
+`/* file: kernel/sched/debug.c */`
+
+![image-20250520212340971](./.05_kernel_sched/image-20250520212340971.png)
+
+![image-20250520211705176](./.05_kernel_sched/image-20250520211705176.png)
+
+![image-20250520211802700](./.05_kernel_sched/image-20250520211802700.png)
+
+
+
+##### base_slice_ns
+
+![image-20250520212228241](./.05_kernel_sched/image-20250520212228241.png)
+
+
+
+
+
+
+
+#### struct load_weight
+
+![image-20250508151508018](./.05_kernel_sched/image-20250508151508018.png)
+
+##### sched_prio_to_weight
+
+![image-20250508150808509](./.05_kernel_sched/image-20250508150808509.png)
+
+##### sched_prio_to_wmult
+
+![image-20250508150158944](./.05_kernel_sched/image-20250508150158944.png)
+
+
+
+#### update_curr
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250521163356569](./.05_kernel_sched/image-20250521163356569.png)
+
+![image-20250508175544523](./.05_kernel_sched/image-20250508175544523.png)
+
+
+
+##### update_curr_se
+
+![image-20250508193522518](./.05_kernel_sched/image-20250508193522518.png)
+
+
+
+##### update_curr_task
+
+![image-20250508193617042](./.05_kernel_sched/image-20250508193617042.png)
+
+
+
+##### update_deadline
+
+![image-20250521163321601](./.05_kernel_sched/image-20250521163321601.png)
+
+
+
+###### calc_delta_fair
+
+![image-20250508175730771](./.05_kernel_sched/image-20250508175730771.png)
+
+![image-20250601231804834](./.05_kernel_sched/image-20250601231804834.png)
+
+
+
+##### update_min_vruntime
+
+`min_vruntime` is used to calculate increment of `avg_vruntime`, which is then used for `lag` caculation.
+
+![image-20250601224756223](./.05_kernel_sched/image-20250601224756223.png)
+
+
+
+##### __update_min_vruntime
+
+![image-20250521163807023](./.05_kernel_sched/image-20250521163807023.png)
+
+
+
+###### avg_vruntime_update
+
+![image-20250525101235538](./.05_kernel_sched/image-20250525101235538.png)
+
+
+
+###### __pick_root_entity
+
+![image-20250525125028422](./.05_kernel_sched/image-20250525125028422.png)
+
+
+
+#### sched_tick
+
+调度节拍
+
+`update_process_times() -> sched_tick() -> task_tick() -> entity_tick()`
+
+
+
+##### entity_tick
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250508160612911](./.05_kernel_sched/image-20250508160612911.png)
+
+
+
+##### resched_curr_lazy
+
+`/* file: kernel/sched/core.c */`
+
+![image-20250508161052609](./.05_kernel_sched/image-20250508161052609.png)
+
+![image-20250508161543459](./.05_kernel_sched/image-20250508161543459.png)
+
+
+
+##### __resched_curr
+
+![image-20250508161923002](./.05_kernel_sched/image-20250508161923002.png)
+
+
+
+# Add task
+
+
+
+## sched_fork
+
+![image-20250520145535737](./.05_kernel_sched/image-20250520145535737.png)
+
+![image-20250520145348299](./.05_kernel_sched/image-20250520145348299.png)
+
+
+
+### __sched_fork
+
+![image-20250520145502064](./.05_kernel_sched/image-20250520145502064.png)
+
+
+
+## queue_task_fair
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250517115650956](./.05_kernel_sched/image-20250517115650956.png)
+
+![image-20250517112303017](./.05_kernel_sched/image-20250517112303017.png)
+
+![image-20250517112446884](./.05_kernel_sched/image-20250517112446884.png)
+
+![image-20250517112513540](./.05_kernel_sched/image-20250517112513540.png)
+
+
+
+### cfs_rq_min_slice
+
+![image-20250517115113947](./.05_kernel_sched/image-20250517115113947.png)
+
+
+
+## enqueue_entity
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250509180658352](./.05_kernel_sched/image-20250509180658352.png)
+
+![image-20250509180810126](./.05_kernel_sched/image-20250509180810126.png)
+
+
+
+### place_entity
+
+![image-20250601235819940](./.05_kernel_sched/image-20250601235819940.png)
+
+![image-20250601235629475](./.05_kernel_sched/image-20250601235629475.png)
+
+![image-20250601235901442](./.05_kernel_sched/image-20250601235901442.png)
+
+
+
+### __enqueue_entity
+
+`/* file: kernel/sched/fair.c */`
+
+![image-20250519212206205](./.05_kernel_sched/image-20250519212206205.png)
+
+
+
+# sched_init
+
+`/* file: kernel/sched/core.c */`
+
+![image-20250513224446082](./.05_kernel_sched/image-20250513224446082.png)
+
+![image-20250513224558687](./.05_kernel_sched/image-20250513224558687.png)
+
+![image-20250513224623512](./.05_kernel_sched/image-20250513224623512.png)
+
+![image-20250513224650721](./.05_kernel_sched/image-20250513224650721.png)
+
+![image-20250519222437726](./.05_kernel_sched/image-20250519222437726.png)
+
+![image-20250513224818789](./.05_kernel_sched/image-20250513224818789.png)
+
+
+
+# task_struct
+
+`/* file: include/linux/sched.h */`
+
+![image-20250429160235585](./.05_kernel_sched/image-20250429160235585.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_3c21493c8ac91bca.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_51d5f1efe6470f1d.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_6f6af38229846a07.png)
+
+![image-20250429182555223](./.05_kernel_sched/image-20250429182555223.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_9de8e0f00533db5a.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_a52e80cdbeec0149.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_8ecfb61d6d810625.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_d2849e7d79ecd0fb.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_5e8f500418d4fb84.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_aef7d0888376d13a.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_fbacce374ff5e798.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_d197c7acbfe88a2c.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_77f7b5120eecc5e9.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_2602a02fb240e6d7.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_8636bfa1bb565e0a.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_ef1357ce15a68d85.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_436ab371f7b02e95.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_b8689bf1978f75bc.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_ccc7f28fbd5652bd.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_c3baab03f8fb9da8.png)
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_5cb7644c8a51fff3.png)
+
+![image-20250429160159489](./.05_kernel_sched/image-20250429160159489.png)
+
+
+
+## new
+
+Implementation in newer version code (v6.14-rc5):
+
+![image-20250506164922578](./.05_kernel_sched/image-20250506164922578.png)
+
+![image-20250506163720063](./.05_kernel_sched/image-20250506163720063.png)
+
+![image-20250507220315485](./.05_kernel_sched/image-20250507220315485.png)
+
+![image-20250506163844565](./.05_kernel_sched/image-20250506163844565.png)
+
+![image-20250506163917020](./.05_kernel_sched/image-20250506163917020.png)
+
+![image-20250506163950335](./.05_kernel_sched/image-20250506163950335.png)
+
+![image-20250506164021383](./.05_kernel_sched/image-20250506164021383.png)
+
+![image-20250506164048287](./.05_kernel_sched/image-20250506164048287.png)
+
+![image-20250506164127481](./.05_kernel_sched/image-20250506164127481.png)
+
+![image-20250506164155057](./.05_kernel_sched/image-20250506164155057.png)
+
+![image-20250506164234430](./.05_kernel_sched/image-20250506164234430.png)
+
+![image-20250506164317639](./.05_kernel_sched/image-20250506164317639.png)
+
+![image-20250506164351835](./.05_kernel_sched/image-20250506164351835.png)
+
+![image-20250506164425294](./.05_kernel_sched/image-20250506164425294.png)
+
+![image-20250506164450171](./.05_kernel_sched/image-20250506164450171.png)
+
+![image-20250506164511871](./.05_kernel_sched/image-20250506164511871.png)
+
+![image-20250506164536498](./.05_kernel_sched/image-20250506164536498.png)
+
+![image-20250506164601256](./.05_kernel_sched/image-20250506164601256.png)
+
+![image-20250506164623160](./.05_kernel_sched/image-20250506164623160.png)
+
+![image-20250506164649105](./.05_kernel_sched/image-20250506164649105.png)
+
+![image-20250506164717901](./.05_kernel_sched/image-20250506164717901.png)
+
+![image-20250506164755251](./.05_kernel_sched/image-20250506164755251.png)
+
+
+
+## thread_info
+
+/* file: arch/riscv/include/asm/thread_info.h */
+
+![image-20250429161736647](./.05_kernel_sched/image-20250429161736647.png)
+
+
+
+## thread_struct
+
+.thread在`task_struct`结构体的最后边。
+
+线程上下文（vs pt_regs），线程换出时保存，换入时恢复。
+
+![img](./.05_kernel_sched/lu1676272gu7a4z_tmp_fd521063a6463d03.png)
+
+
+
+## kernel stack
+
+For **PID0** process, the kernel stack is on a thread block together with`task_struct` `init_task` . The total size of the thread block is 16K. But for other threads, their **kernel stack** and `task_struct` will allocated separately.
+
+/* file: arch/riscv/include/asm/processor.h */
+
+![image-20250429160505720](./.05_kernel_sched/image-20250429160505720.png)
+
+/* file: include/asm-generic/vmlinux.lds.h */
+
+![image-20250429160543713](./.05_kernel_sched/image-20250429160543713.png)
+
+
+
+### THREAD_SIZE
+
+The thread block size is 16K (4 page size) on 64-bit system, 8K on 32-bit system.
+
+/* file: arch/riscv/include/asm/thread_info.h */
+
+![image-20250429161040849](./.05_kernel_sched/image-20250429161040849.png)
+
+
 
 
 
 # sched_tick
+
+调度节拍
+
+`/* file: kernel/sched/core.c */`
+
+![image-20250508171828351](./.05_kernel_sched/image-20250508171828351.png)
+
+![image-20250508171849191](./.05_kernel_sched/image-20250508171849191.png)
+
+
 
 ## struct tick_sched
 
@@ -324,6 +1082,10 @@ The handler `hrtimer_interrupt` will be added to the `clock_event_device` in `ti
 
 
 ## hrtimer
+
+`/* file: include/linux/hrtimer_types.h */`
+
+![image-20250508112254176](./.05_kernel_sched/image-20250508112254176.png)
 
 
 
@@ -792,9 +1554,5 @@ This one is currently used by setting "riscv,clint0" compatible in device tree.
 
 # jiffies
 
-Is the number of system ticks. The system tick frequency is set by `CONFIG_HZ`, while 100 means ticking 100 times in a second. The tick period is 10ms for `CONFIG_HZ=100`, as `tick = 1s / HZ`.
-
-
-
-# time slice
+**Is the number of system ticks**. The system tick frequency is set by `CONFIG_HZ`, while 100 means ticking 100 times in a second. The tick period is 10ms for `CONFIG_HZ=100`, as `tick = 1s / HZ`.
 

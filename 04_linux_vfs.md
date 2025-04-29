@@ -126,3 +126,26 @@ struct file_operations {
 } __randomize_layout;
 ```
 
+
+
+# sysfs
+
+**sysfs** is a virtual filesystem in the Linux kernel that provides a standardized interface to expose kernel objects, their attributes, and relationships to user space. It is mounted at `/sys` and allows users and applications to query and **configure kernel subsystems, devices, and drivers** through virtual files.
+
+
+
+/sys/devices/: Mirrors the internal kernel device tree, representing physical and logical devices.
+
+/sys/class/: Groups devices by types (e.g., network interfaces, block devices).
+
+/sys/bus/: Contains directories for each bus type (e.g., PCI, USB), with subdirectories for devices and drivers.
+
+/sys/module/: Information about loaded kernel module
+
+/sys/power/: Power management settings
+
+
+
+## How sysfs Works
+
+**sysfs** is tightly integrated with the `kobject` system in the kernel. Each registered `kobject` creates a corresponding directory in `sysfs`, reflecting its parent-child hierarchy.

@@ -56,7 +56,7 @@
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_40bfda1d1e4a5be6.png)
 
--> `kernel_clone`
+#### -> `kernel_clone`
 
 会复制一个进程，只是加到runqueue队列里，会不会执行取决于调度器。
 
@@ -68,7 +68,7 @@
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_f2306393c74da9d.png)
 
-`wake_up_new_task`应该是~~开始相应task，即线程的执行~~。
+`wake_up_new_task`应该是将进程设置为就绪态。
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_140b96452174587d.png)
 
@@ -96,7 +96,7 @@
 
 再检查`check_preempt_curr`函数中是否有schedule的操作。
 
-~~根据描述，会尝试抢占当前线程~~。（实际上应该只是加到就绪队列）
+~~根据描述，会尝试抢占当前线程~~。（实际上应该只是加到就绪队列，然后设备`need_resched flag`）
 
 ##### `check_preempt_curr()`
 
@@ -122,11 +122,15 @@
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_8f215b9ca2e9887a.png)
 
+
+
 #### -> `copy_process`
 
-
-
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_515e85163758a7fb.png)
+
+...
+
+![image-20250429162927589](./.01_init_PID0_process/image-20250429162927589.png)
 
 ...
 
@@ -144,9 +148,11 @@
 
 ##### -> `copy_thread`
 
+/* file: arch/riscv/kernel/process.c */
+
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_38d4a82b9f0b120b.png)
 
-需要确认`p->flags`传入的参数是否包括`PF_KTHREAD`。这决定了刚孵化出的init进程处理于S模式还是M模式。（从`kernel_init`函数处理了很多内存相关任务看，刚孵化出的init进程应该还在S模式，直到执行init程序，在`kernel_execve`加载了init程序后，再返回到**ret_from_exception**，最后执行sret实现了到U模式的切换）
+需要确认`p->flags`传入的参数是否包括`PF_KTHREAD`。这决定了刚孵化出的init进程处理于S模式还是M模式。（从`kernel_init`函数处理了很多内存相关任务看，刚孵化出的init进程应该还在S模式，直到执行init程序，在`kernel_execve`加载了init程序后，再返回到**ret_from_exception**，最后执行`sret`实现了到U模式的切换）
 
 
 
@@ -156,27 +162,33 @@
 
 ###### task_pt_regs
 
+对于新创建的线程，会在**内核栈**的最上边部分，分配并填充`pt_regs`的初始值，然后在线程第一次被调度时，将这些寄存器的值弹出。其中比较重要的，在这一次会去初始化的寄存器有`gp`, `status`。
+
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_b1a62483fd52ecd8.png)
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_13bbfcabc303f149.png)
 
-这里返回的是内核栈的指针。（内核栈的栈空间是什么时候分配的呢？）
+这里返回的是内核栈的指针。（内核栈的栈空间是什么时候分配的呢？`init_task`，即PID0进程是在编译的时候静态分配的，其它进程是在fork`->kernel_clone->copy_process->dup_task_struct`的时候动态分配的，而且它们的`task_struct`和内核栈是分开分配的。）
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_f5cfcdfbb6338c3d.png)
 
-等于2个page。
+64位的系统中THREAD_SIZE的大小为4个page，32位系统等于2个page。
 
-（这样看，应该是分配了两个页的大小给内核栈。这里从栈中分配一个pt_regs的大小，然后返回基址给调用者）
 
-这里为什么不叫STACK_SIZE或者THREAD_STACK_SIZE?
+
+这里为什么不叫STACK_SIZE或者THREAD_STACK_SIZE呢？内核栈的这块空间，上半部分是内核态的栈空间，下半部分是`task_struct`(PID0进程是这样的)。另外，对于内核，没有线程和进程的区别，或者说都是线程（thread），所以叫THREAD_SIZE。
+
+
 
 ###### pt_regs
 
-中断上下文（vs .thread），进入**中断**保存，退出**中断**恢复。
+中断上下文（vs .thread），进入**中断**保存，退出**中断**恢复。Normally, the interrupt context is allocated in kernel stack.
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_2eb77bb465fe4120.png)
 
-##### -> `ret_from_kernel_thread`
+
+
+##### -> ret_from_kernel_thread
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_2b93b701b14be4a9.png)
 
@@ -218,63 +230,9 @@
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_b0c2765904e4931f.png)
 
-#### task_struct
 
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_be06fb5fe8dbb8c8.png)
 
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_3c21493c8ac91bca.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_51d5f1efe6470f1d.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_6f6af38229846a07.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_8d02417d9443f838.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_9de8e0f00533db5a.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_a52e80cdbeec0149.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_8ecfb61d6d810625.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_d2849e7d79ecd0fb.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_5e8f500418d4fb84.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_aef7d0888376d13a.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_fbacce374ff5e798.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_d197c7acbfe88a2c.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_77f7b5120eecc5e9.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_2602a02fb240e6d7.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_8636bfa1bb565e0a.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_ef1357ce15a68d85.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_436ab371f7b02e95.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_b8689bf1978f75bc.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_ccc7f28fbd5652bd.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_c3baab03f8fb9da8.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_5cb7644c8a51fff3.png)
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_6b44aa6b979e56dc.png)
-
-.thread在`task_struct`结构体的最后边。
-
-##### .thread
-
-线程上下文（vs pt_regs），线程换出时保存，换入时恢复。
-
-![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_fd521063a6463d03.png)
-
-### -> ‘start_thread`
+### -> `start_thread`
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_984606b9dcab9472.png)
 
@@ -336,7 +294,61 @@
 
 
 
-### Spawn thread 1 and 2
+# dup_task_struct
+
+![image-20250429173039425](./.01_init_PID0_process/image-20250429173039425.png)
+
+![image-20250429173108691](./.01_init_PID0_process/image-20250429173108691.png)
+
+![image-20250429173648870](./.01_init_PID0_process/image-20250429173648870.png)
+
+
+
+## alloc_task_struct_node
+
+![image-20250429173817530](./.01_init_PID0_process/image-20250429173817530.png)
+
+
+
+### fork_init
+
+/* file: kernel/fork.c */
+
+![image-20250429175842798](./.01_init_PID0_process/image-20250429175842798.png)
+
+
+
+## alloc_thread_stack_node
+
+/* file: kernel/fork.c */
+
+![image-20250429175133532](./.01_init_PID0_process/image-20250429175133532.png)
+
+![image-20250429175232783](./.01_init_PID0_process/image-20250429175232783.png)
+
+![image-20250429175318208](./.01_init_PID0_process/image-20250429175318208.png)
+
+![image-20250429175333548](./.01_init_PID0_process/image-20250429175333548.png)
+
+![image-20250429174057172](./.01_init_PID0_process/image-20250429174057172.png)
+
+
+
+### thread_stack_cache
+
+![image-20250429175006864](./.01_init_PID0_process/image-20250429175006864.png)
+
+
+
+## arch_dup_task_struct
+
+/* file: arch/riscv/kernel/process.c */
+
+![image-20250429174321596](./.01_init_PID0_process/image-20250429174321596.png)
+
+
+
+# Spawn thread 1 and 2
 
 ![img](./.01_init_PID0_process/lu1676272gu7a4z_tmp_c844663383a1da93.png)
 
@@ -361,3 +373,163 @@
 每个用户进程拥有一个独立的地址空间，被从属线程共享。在多线程技术出现之前，调度的基本单位是进程。内核进程和用户进程都是进程，但内核进程都处在同一个虚拟内存空间下，而用户进程有各自独立的虚拟内存空间。为了方便中断及系统调用的响应，每一个用户进程的虚拟地址空间都把高地址的大约三分之一的空间留给内核空间。多线程技术发展出来之后，每个用户进程的任务的拆分成多个线程，然后对它们分别调度以提高并发性。这时，用户进程调度的基本单元变成了线程，而对内核进程的调度方式还跟原来一样。由于内核进程和内核空间的关系，与用户线程和用户进程空间的关系非常相似，所以直觉上内核进程反而应该称为内核线程。所以，user threads是线程，而kernel threads是进程。
 
 User threads由user-level线程库创建和管理。
+
+
+
+- `fork()` - `exec()` is more likely to be used to create a new **process**, while it's replaced by quickly calling `exec()` to run a different program. `fork()` itself will let child process continue execution from `fork()` return.
+
+- `clone()`, with more granular control over what resources are shared between the parent and child process, is more likely to be used for creating **threads**. It is also Linux-specific, and will start by calling a specified function.
+
+
+
+# Thread
+
+ref: https://man7.org/linux/man-pages/man7/pthreads.7.html
+
+POSIX.1 specifies a set of interfaces (functions, header files) for threaded programing commonly known as POSIX threads, or Pthreads. A single process can contain multiple threads, all of which are executing the same program. These threads share the same global memory (data and heap segments), but **each thread has its own stack** (automatic variables)
+
+On Linux, programs that use the Pthreads API should be compiled using `cc -pthread`.
+
+
+
+对于栈空间的分布，主线程（即，创建进程时，通过`fork`-`exec`后产生的线程）的栈空间位于用户VMA空间的最高地址，并向下生长；而其它子线程的栈空间由**NPTL**（Native POSIX Thread Library）从stack cache获得，或者通过mmap系统调用获得，然后将**栈指针**通过`clone`系统调用fork子线程时给到内核，最终在子线程被调度后得到使用。
+
+
+
+## `pthread_create`
+
+The `pthread_create()` function starts a new thread in the calling process. The new thread starts execution by invoking `start_routine()`; `arg` is passed as the sole argument of `start_routine()`.
+
+ref: https://man7.org/linux/man-pages/man3/pthread_create.3.html
+
+```c
+#include <pthread.h>
+
+int pthread_create(pthread_t *restrict thread,
+                   const pthread_attr_t *restrict attr,
+                   typeof(void *(void *)) *start_routine,
+                   void *restrict arg);
+```
+
+![image-20250501233221239](./.01_init_PID0_process/image-20250501233221239.png)
+
+![image-20250502232445470](./.01_init_PID0_process/image-20250502232445470.png)
+
+...
+
+![image-20250501233346661](./.01_init_PID0_process/image-20250501233346661.png)
+
+...
+
+![image-20250501233425207](./.01_init_PID0_process/image-20250501233425207.png)
+
+
+
+### allocate_stack
+
+![image-20250501235308073](./.01_init_PID0_process/image-20250501235308073.png)
+
+![image-20250501235354460](./.01_init_PID0_process/image-20250501235354460.png)
+
+![image-20250501235704857](./.01_init_PID0_process/image-20250501235704857.png)
+
+![image-20250501235737005](./.01_init_PID0_process/image-20250501235737005.png)
+
+![image-20250502221911900](./.01_init_PID0_process/image-20250502221911900.png)
+
+![image-20250502220105003](./.01_init_PID0_process/image-20250502220105003.png)
+
+![image-20250502215852172](./.01_init_PID0_process/image-20250502215852172.png)
+
+...
+
+![image-20250502215535760](./.01_init_PID0_process/image-20250502215535760.png)
+
+
+
+#### get_cached_stack
+
+![image-20250502220748666](./.01_init_PID0_process/image-20250502220748666.png)
+
+![image-20250502220843227](./.01_init_PID0_process/image-20250502220843227.png)
+
+![image-20250502220921733](./.01_init_PID0_process/image-20250502220921733.png)
+
+
+
+#### __mmap
+
+![image-20250502222435861](./.01_init_PID0_process/image-20250502222435861.png)
+
+
+
+### create_thread
+
+![image-20250502230757184](./.01_init_PID0_process/image-20250502230757184.png)
+
+![image-20250502230820992](./.01_init_PID0_process/image-20250502230820992.png)
+
+![image-20250502230907721](./.01_init_PID0_process/image-20250502230907721.png)
+
+
+
+### __clone_internal
+
+![image-20250502231226747](./.01_init_PID0_process/image-20250502231226747.png)
+
+
+
+![image-20250502231304865](./.01_init_PID0_process/image-20250502231304865.png)
+
+
+
+![image-20250502231325229](./.01_init_PID0_process/image-20250502231325229.png)
+
+
+
+#### __clone
+
+`start_thread()` and its `pd` are stored in the user stack space.
+
+![image-20250502233435762](./.01_init_PID0_process/image-20250502233435762.png)
+
+
+
+## `clone` syscall
+
+A user stack pointer will be passed in from the `clone` syscall parameters, as `newsp`.
+
+```c
+/* file: kernel/fork.c */
+SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
+		 int __user *, parent_tidptr,
+		 int __user *, child_tidptr,
+		 unsigned long, tls)
+
+{
+	struct kernel_clone_args args = {
+		.flags		= (lower_32_bits(clone_flags) & ~CSIGNAL),
+		.pidfd		= parent_tidptr,
+		.child_tid	= child_tidptr,
+		.parent_tid	= parent_tidptr,
+		.exit_signal	= (lower_32_bits(clone_flags) & CSIGNAL),
+		.stack		= newsp,
+		.tls		= tls,
+	};
+
+	return kernel_clone(&args);
+}
+```
+
+
+
+## kernel_clone
+
+```c
+pid_t kernel_clone(struct kernel_clone_args *args)
+    copy_process( struct pid *pid, int trace, int node, struct kernel_clone_args *args)
+    	copy_thread(unsigned long clone_flags, unsigned long usp, struct task_struct *p, unsigned long tls)
+```
+
+
+

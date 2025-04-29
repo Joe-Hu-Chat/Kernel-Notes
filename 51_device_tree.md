@@ -182,6 +182,12 @@ If the pointer is NULL, `ERR_PTR(-22)` will be returned
 
 
 
+## of_prop_cmp
+
+![image-20250412231305571](./.51_device_tree/image-20250412231305571.png)
+
+
+
 # of_parse_phandle*
 
 ## of_parse_phandle
@@ -213,6 +219,8 @@ If the pointer is NULL, `ERR_PTR(-22)` will be returned
 ## of_parse_phandle_with_fixed_args
 
 ![image-20241204150135035](./.51_device_tree/image-20241204150135035.png)
+
+
 
 ### __of_parse_phandle_with_args
 
@@ -283,42 +291,6 @@ It's actually a pointer to nodes.
 ![image-20241204133903377](./.51_device_tree/image-20241204133903377.png)
 
 ![image-20241204133920498](./.51_device_tree/image-20241204133920498.png)
-
-
-
-
-
-# Device links
-
-![image-20241203160426823](./.51_device_tree/image-20241203160426823.png)
-
-## initcall:
-
-## devlink_class_init
-
-![image-20241203141029208](./.51_device_tree/image-20241203141029208.png)
-
-![image-20241203141112712](./.51_device_tree/image-20241203141112712.png)
-
-
-
-## device_links_supplier_sync_state_pause
-
-![image-20241203140647526](./.51_device_tree/image-20241203140647526.png)
-
-![image-20241203140802802](./.51_device_tree/image-20241203140802802.png)
-
-## fw_devlink_pause
-
-![image-20241203135910904](./.51_device_tree/image-20241203135910904.png)
-
-![image-20241203135924100](./.51_device_tree/image-20241203135924100.png)
-
-
-
-## fw_devlink_resume
-
-![image-20241203135946187](./.51_device_tree/image-20241203135946187.png)
 
 ****
 
@@ -391,6 +363,8 @@ The `.fwnode` member in `struct device`
 ![image-20241203134757464](./.51_device_tree/image-20241203134757464.png)
 
 ![image-20241204171149682](./.51_device_tree/image-20241204171149682.png)
+
+
 
 ## .get_next_child_node
 

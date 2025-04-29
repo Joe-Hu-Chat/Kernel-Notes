@@ -94,6 +94,20 @@ platform机制将设备本身的资源注册进内核，由内核统一管理，
 
 ![image-20240306095507999](./.50_driver_model/image-20240306095507999.png)
 
+
+
+#### bus_type
+
+`/* file: include/linux/device */`
+
+![image-20250413212648237](./.50_driver_model/image-20250413212648237.png)
+
+![image-20250413212720421](./.50_driver_model/image-20250413212720421.png)
+
+![image-20250413212808953](./.50_driver_model/image-20250413212808953.png)
+
+
+
 ### bus_register
 
 ![image-20240306095534346](./.50_driver_model/image-20240306095534346.png)
@@ -704,6 +718,46 @@ All the `uart_8250_port.uart_port.ops` will be set to `serial8250_pops`.
 
 
 
+
+
+
+
+# Device links
+
+![image-20241203160426823](./.50_driver_model/image-20241203160426823.png)
+
+## initcall:
+
+## devlink_class_init
+
+![image-20241203141029208](./.50_driver_model/image-20241203141029208.png)
+
+![image-20241203141112712](./.50_driver_model/image-20241203141112712.png)
+
+
+
+## device_links_supplier_sync_state_pause
+
+![image-20241203140647526](./.50_driver_model/image-20241203140647526.png)
+
+![image-20241203140802802](./.50_driver_model/image-20241203140802802.png)
+
+## fw_devlink_pause
+
+![image-20241203135910904](./.50_driver_model/image-20241203135910904.png)
+
+![image-20241203135924100](./.50_driver_model/image-20241203135924100.png)
+
+
+
+## fw_devlink_resume
+
+![image-20241203135946187](./.50_driver_model/image-20241203135946187.png)
+
+
+
+****
+
 # UART drivers
 
 ## dw8250
@@ -1053,32 +1107,6 @@ This `uart_driver` will be attached to the `uart_port` of a `uart_8250_port` : `
 ![image-20240606104050992](./.50_driver_model/image-20240606104050992.png)
 
 ![image-20240606104109111](./.50_driver_model/image-20240606104109111.png)
-
-
-
-# printk
-
-How `printk` works?
-
-
-
-https://lwn.net/Articles/909980/ about `printk`
-
-console lock for all consoles is the existing **global lock** for all consoles
-
-**per-console lock** that would be added, would also get a state structure so that their status can be tracked.
-
-
-
-It is important to note that while there is only a  single CPU actually physically printing to the console at any given time, other CPUs can still use `printk()`; the data goes to the **ring buffer** and will eventually get out to the console—at least that is the hope.
-
-`write_thread`, is called from a thread context, thus it can sleep.
-
-`write_atomic`, is called from atomic mode so it cannot block.
-
-
-
-https://lwn.net/Articles/938236/ about realtime patches
 
 
 

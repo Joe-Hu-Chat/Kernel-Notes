@@ -16,9 +16,7 @@ Stands for **Secondary Program Loader**, comparing to U-Boot proper, which is al
 
 `SPL` -> `OpenSBI` -> `U-Boot` -> `Linux`
 
-There may also be a BootRom before SPL, which resides inside the die.
-
-maskrom
+There may also be a BootRom before SPL, which resides inside the die, called maskrom
 
 
 

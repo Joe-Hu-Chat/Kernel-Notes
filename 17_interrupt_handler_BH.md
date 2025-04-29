@@ -456,7 +456,7 @@ IRQ thread中完成的**一定是中断的BH**（下半部分），而workqueue�
 
 ## software interrupt context
 
-特点：硬件中断处于使能状态，但又不在（没有返回到）进程环境中。
+特点：硬件中断处于使能状态，~~但又不在（没有返回到）进程环境中~~。软中断处于disable的状态，这会阻止进程的调度。
 softirqs只能在raise它的CPU上执行，它的pending位是per-CPU的。
 由于处于interrupt context而不是process context，**softriqs/tasklets不能sleep**。
 
@@ -555,13 +555,37 @@ ref: [Concurrency Managed Workqueue之（一）：workqueue的基本概念 (wowo
 
 通过执行softirqs中注册的action，相应的bottom half被完成。
 
-![img](./.17_interrupt_handler_BH/wps1236.jpg)
+![image-20250326223308116](./.17_interrupt_handler_BH/image-20250326223308116.png)
 
 scan all the softirqs with softirq_bit set
 
 ![img](./.17_interrupt_handler_BH/wps1290.jpg)
 
-![img](./.17_interrupt_handler_BH/wps1329.jpg)
+![image-20250326224114726](./.17_interrupt_handler_BH/image-20250326224114726.png)
+
+
+
+##### __local_bh_disable_ip
+
+With `SOFTIRQ_OFFSET`, this function instructs entering of softirq processing.
+
+![image-20250326223202621](./.17_interrupt_handler_BH/image-20250326223202621.png)
+
+![image-20250326223829859](./.17_interrupt_handler_BH/image-20250326223829859.png)
+
+
+
+##### __local_bh_enable
+
+With `SOFTIRQ_OFFSET`, this function instructs leaving of softirq processing.
+
+![image-20250326223737329](./.17_interrupt_handler_BH/image-20250326223737329.png)
+
+
+
+![image-20250326223918187](./.17_interrupt_handler_BH/image-20250326223918187.png)
+
+
 
 ##### pending
 

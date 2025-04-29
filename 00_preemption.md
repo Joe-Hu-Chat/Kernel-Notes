@@ -4,39 +4,69 @@
 
 # preemption
 
+![img](./.00_preemption/lu1660747gsyto0_tmp_1936156daf2078f8.png)
+
 
 
 搞清楚抢占和调度都是怎么发生？
 
 ## user-space preemption
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_1936156daf2078f8.png)
+用户进程抢占调度
+
+### resume_userspace
+
+根据sstatus.SPP，可知要返回*kernel*还是*userspace*
+
+![image-20250326181719101](./.00_preemption/image-20250326181719101.png)
 
 
 
-在中断或者异常响应结束，返回用户空间（根据sstatus.SPP可知会返回内核空间还是用户空间）之前，会
+在中断或者异常响应结束，返回用户空间之前，会检查`current_thread_info->flags`，来确定是否有调度工作（work_pending）
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_105dbe97c8c834b2.png)
 
-如果**thread information flags**中，`_TI_NEED_RESHED`标志置位，则进行用户进程调度。否则调用`do_notify_resume`。
+![image-20250326181758905](./.00_preemption/image-20250326181758905.png)
+
+![image-20250326180546533](./.00_preemption/image-20250326180546533.png)
+
+![image-20250326181825848](./.00_preemption/image-20250326181825848.png)
+
+
+
+### work_pending
+
+如果**current_thread_info->flags**中，`_TI_NEED_RESHED`标志置位，则进行调度(schedule)。否则调用`do_notify_resume`。(由于ra已经设置为ret_from_exception，所以这里都使用tail指令来跳转，而不是call)
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_6b89b894a7e6f62.png)
 
-### `schedule()`
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_e4f1a200664d0370.png)
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_237594da817607ec.png)
+![image-20250326180211527](./.00_preemption/image-20250326180211527.png)
+
+
+
+#### schedule()
+
+This scheduler called in this occasion loop between `ret_from_exception` and returning to *userspace*.
+
+![image-20250326180305333](./.00_preemption/image-20250326180305333.png)
+
+
 
 
 
 ## kernel-space preemption
 
+内核进程抢占调度
+
+### resume_kernel
+
 在中断或者异常响应处理结束前，会检查是否需要对**内核线程**进行抢占调度：
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_67f65e0d7640c0f5.png)
 
-`CONFIG_PREEMPTION` : 代表是否支持内核抢占，如果不支持则跳转到`restore_all`
+`CONFIG_PREEMPTION` : 代表是否支持**内核**抢占调度，如果支持则执行抢占调度，否则跳转到`restore_all`
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_922992ffbaf50d8b.png)
 
@@ -44,11 +74,25 @@ assembler directive: `.set`
 
 [Pseudo Ops (Using as) (sourceware.org)](https://sourceware.org/binutils/docs/as/Pseudo-Ops.html)
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_82ea47381555b144.png)
+![image-20250326182321544](./.00_preemption/image-20250326182321544.png)
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_d76d5d26d040666e.png)
 
-### `preempt_count()`
+
+![image-20250326224318917](./.00_preemption/image-20250326224318917.png)
+
+If the `thread_info.preempt_count` is not zero, preemption is not allowed, i.e., it will restore the previous context and continue what has been interrupted.
+
+
+
+#### preempt_schedule_irq
+
+This scheduler called in this occasion loop between `ret_from_exception` and returning to *kernel* space.
+
+![image-20250326182023818](./.00_preemption/image-20250326182023818.png)
+
+
+
+### preempt_count()
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_1e328d73bc45f56c.png)
 
@@ -58,11 +102,11 @@ assembler directive: `.set`
 
 
 
-## CONFIG_PREEMPTION
+### CONFIG_PREEMPTION
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_be4e467c12347b83.png)
 
-PREEMPTION是由其它配置决定的，主要是PREEMT和ARCH_NO_PREEMPT，即硬件支不支持抢占。PREEMPT相当于Preemptible Kernel配置。PREEMPT_RT（realtime）如果支持的话，同样可以配置内核为抢占状态。
+PREEMPTION是由其它配置决定的，主要是PREEMT和ARCH_NO_PREEMPT，即硬件支不支持抢占。PREEMPT相当于**Preemptible Kernel**配置。PREEMPT_RT（realtime）如果支持的话，同样可以配置内核为抢占状态。
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_27a3232fe967822.png)
 
@@ -87,6 +131,8 @@ CONFIG_PREEMPT -> CONFIG_PREEMPTION 	（抢占）
 如果没有配置`CONFIG_PREEMPT`，则Linux内核将不会具有抢占功能。如果还没有配置`CONFIG_PREEMPT_VOLUNTARY`则函数`might_sleep()`将近似等于空函数，即不能调用`_cond_resched()`来调度其它任务。也就不具备自主出让CPU的能力，只能完全执行完当前程序退出后，才能出让CPU给其它任务。
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_37ebb6b4261b61f3.png)
+
+
 
 ### `might_sleep()`
 
@@ -136,15 +182,15 @@ CONFIG_PREEMPT -> CONFIG_PREEMPTION 	（抢占）
 
 
 
-## schedule
+## __schedule
 
 （`__schedule()`：主要的scheduler函数）
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_ff4020bce7df8a24.png)
+![image-20250506200808994](./.00_preemption/image-20250506200808994.png)
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_484b6a59d4354546.png)
 
-![img](./.00_preemption/lu1660747gsyto0_tmp_2ed596c9e2767f80.png)
+![image-20250402180246396](./.00_preemption/image-20250402180246396.png)
 
 
 
@@ -192,7 +238,7 @@ mm_users: number of real users, i.e. threads in a user process
 
 
 
-user space/ kernel space（用户空间，内核空间）是对虚拟地址空间而言的；user context/interrupt context是对是否有隶属的task struct而言的？
+user space/ kernel space（用户空间，内核空间）是对虚拟地址空间而言的；user context/interrupt context是对是否有隶属的task struct而言的？因为task struct是用来存储上下文的基础。
 
 上下文区别之一：中断上下文使用**当前线程**的内核栈，线程上下文使用自己的线程栈或者内核栈。
 
@@ -203,26 +249,50 @@ user space/ kernel space（用户空间，内核空间）是对虚拟地址空�
 - 虚拟地址空间：用户空间，内核空间
 - 上下文：线程上下文，中断上下文
 
-地址空间跟代码的虚拟地址有关系；上下文跟是否出了`[handle_exception, sret]`的区间有关系。如果代码的虚拟地址在高1G（32位系统中），则位于内核空间，否则位于用户空间。如果cpu的执行流在[handle_exception, sret]中，则处于中断上下文，否则处于线程上下文。
+地址空间(address_space)跟代码的虚拟地址有关系。如果代码的虚拟地址在高1G（32位系统中），则位于内核空间，否则位于用户空间。
 
-在`entry.S`文件中，`ENTRY(handle_exception)`指定了产生中断/异常时执行流跳转的位置。在进入**中断上下文**（interrupt context）时，会保存中断现场到（线程的）内核栈；在处理完中断/异常（`handle_arch_irq/handle_syscall/excp_vect_table`）后，从中断上下文退出时，会先恢复用户/内核空间（`resume_userspace/resume_kernel`），再恢复其它的中断现场（`restore_all`），最终执行`sret`回到**线程上下文**（thread context）。在中断上下文中，处理完中断/异常后，返回之前，可能发生线程切换，因此回到的线程可能和进入中断上下文时的线程不同。
+在`entry.S`文件中，`ENTRY(handle_exception)`指定了产生中断/异常时执行流跳转的位置。在进入中断处理全程中时，会保存中断现场到（线程的）内核栈；
 
-##### schedule
+在处理完中断/异常（`handle_arch_irq/handle_syscall/excp_vect_table`）后，从中断环境退出时，会先恢复用户/内核空间（`resume_userspace/resume_kernel`），再恢复其它的中断现场（`restore_all`），最终执行`sret`回到被中断前的位置。
 
-如果线程切换只发生在中断上下文结束前（`resume_userspace/resume_kernel`），那么跟线程交互的接口只有**中断入口及中断返回**（entry/sret），线程调度不直接作用到线程上。
+执行**系统调用或者响应异常事件**时，执行的代码在`[handle_exception, sret]`区间，也是处于线程上下文，它的上下文可以存储于相应线程的task_struct的kernel stack，在执行过程中相应的preemption counter也不会被修改，因此也可以被调度。
+
+在`[handle_exception, sret]`区间，即使是处理**中断事件**(handle_arch_irq)时，也不都是处于中断上下文。只有处于`irq_enter()`和`irq_exit()`之间的代码，才会因此其中增加preemption counter的值而进入**中断上下文**（interrupt context）。首先，中断事件产生时全局中断会被硬件关闭，这就阻止了被动抢占的可能（处理异常时，会恢复之前的全局中断的状态，即之前是开的就打开，之前是关的就还关着）。在中断例程执行过程中，都会保持全局中断的关闭，即使在执行softirq时，打开硬中断前，也会关闭softirq，即增加preemption counter的值。在执行完softirq减去 preemption counter中相应的值前，又会关闭硬中断，因此，整个中断事件处理过程都是不可调度的。但是只要preemption counter中的hardirq和softirq counter被清0，就代表着回到了**线程上下文**（thread context）。即使是响应中断事件，在`resume_kernel`或者`resume_userspace`阶段，都是可能被调度的。
+
+
+
+##### in_interrupt
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_1200a17886e1bd5a.png)
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_ce6f95d0c58fcb89.png)
+
+hardirqs, bottom halves, softirqs, tasklets, workqueue
+
+user context, interrupt context, spinlock held
+
+用户（进程）上下文（thread context）和中断上下文（interrupt context），应该是用来大概区分CPU资源的正常使用者，中断例程环境等和其它状态的区别。可以广义地将所有的状态全部分划分到这两种（所有线程，包括内核线程和用户线程均划分为user context，hardirqs和系统调用等异常划分为interrupt context，softirqs?）；也可以狭义地将它们定义为两种状态，剩下的其它状态分别为它们命名。
+
+
+
+##### schedule occasion
+
+如果线程切换只发生在中断返回时（`resume_userspace/resume_kernel`），那么跟线程交互的接口只有**中断入口及中断返回**（entry/sret），线程调度不直接作用到被中断的线程上。
 
 - 对于**用户线程**，肯定是这样的。因为用户态只能通过系统调用trap到内核态，才能主动schedule，而被动schedule也只能是由中断或异常触发。
 - 对于**内核线程**（/进程，历史原因可以这么叫），主动schedule时，会直接从**线程上下文**进行。
+
+因此，线程调度只发生在内核态，swapping只会与task struct和kernel stack有关系。
 
 
 
 #### task_struct
 
-不同的内核线程使用相同的address space，但是使用不同的task struct。每一个线程（LWP)相当于一个task。当线程结束时，会释放相应的task_struct所占用的的空间。
+所有的内核线程使用同一个VMA空间（Virtual Memory Address space，会映射到每一个用户进程的VMA的高位区域），但是使用不同的task struct。Linux系统中的线程（Thread）是一种轻量级进程（Light Weight Process）。每一个进程/线程（LWP)相当于一个任务（task），进程/线程调度的对象是`task_struct`。当线程结束时，会释放相应的`task_struct`所占用的的空间。
 
 
 
-在U模式下sscratch指向当前进程/线程的task_struct，进入内核态后就读到tp寄存器中。LWP(Light Weight Process)相对就于一组（**`task_struct`+kernel stack** ）？不管是内核进程，还是用户线程，都有一组（**`task_struct`+kernel stack** ），所以它们才能被schedule调度？
+在U模式下特殊寄存器`sscratch`指向当前进程/线程的`task_struct`，进入内核态后就读到tp寄存器中。LWP(Light Weight Process)相对就于一组（**`task_struct`+kernel stack**)。不管是内核进程，还是用户线程，都有一组（**`task_struct`+kernel stack** ），所以它们才能被schedule调度。
 
 task_struct/kernel stack（内核栈）和线程/进程间的关系如下图所示：
 
@@ -230,21 +300,34 @@ task_struct/kernel stack（内核栈）和线程/进程间的关系如下图所�
 
 ##### context:
 
-- interrupt context
-- kernel process context
-- user thread context
+- interrupt context, the context is based on the **kernel stack** of the interrupted threads. So it must not be scheduled, or it will block threads randomly while interrupting them.
+- kernel process context, all threads have **kernel stack** used in privilege mode.
+- user thread context, only user threads have **user stack** to store function context and local variables
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_aa78e4012f0eebd2.png)
 
 
 
-###  `switch_to`
+top程序中，统计负载时，都是怎么划分的呢？
+
+Guess:
+
+- usr: time spent in user mode
+- sys: time spent in system mode, including kernel threads and system calls.
+- irq: time spent in hardirq
+- sirq: time spent in softirq
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_a0454e74a9213414.png)
+
+
+
+###  switch_to
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_1a8c00a9d83eec7a.png)
 
 线程切换时，需要保存和恢复线程上下文。
 
-**线程上下文**保存在`thread_struct`中。线程切换一定发生在内核态，且在schedule函数中。在`switch_to`函数中，完成了**执行流**的切换（`__switch_to`函数中ra的值发生了切换，因此函数返回后就到了新线程中）。
+**线程上下文**保存在task->thread (`thread_struct`)中。线程切换一定发生在内核态，且在schedule函数中。在`switch_to`函数中，完成了**执行流**的切换（`__switch_to`函数中ra的值发生了切换，因此函数返回后就到了新线程中）。
 
 根据C语言的编译规则，此时的需要保存的现场包括`sp`（内核栈指针），`s`寄存器和`ra`寄存器（调用`__switch_to`函数后的返回地址）。而其它`a`寄存器和`t`寄存器的**有效范围**，不超出`__switch_to`函数，因此不需要保存。
 
@@ -288,7 +371,7 @@ task_struct/kernel stack（内核栈）和线程/进程间的关系如下图所�
 
 
 
-###  `switch_mm`
+###  switch_mm
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_5eae3371ae4ac45a.png)
 
@@ -400,36 +483,6 @@ EXPORT_SYMBOL(schedule_timeout);
 
 
 # Others
-
-## 中断
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_1200a17886e1bd5a.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_ce6f95d0c58fcb89.png)
-
-hardirqs, bottom halves, softirqs, tasklets, workqueue
-
-user context, interrupt context, spinlock held
-
-用户（进程）上下文（thread context）和中断上下文（interrupt context），应该是用来大概区分CPU资源的正常使用者，中断例程环境等和其它状态的区别。可以广义地将所有的状态全部分划分到这两种（所有线程，包括内核线程和用户线程均划分为user context，hardirqs和系统调用等异常划分为interrupt context，softirqs?）；也可以狭义地将它们定义为两种状态，剩下的其它状态分别为它们命名。
-
-
-
-### 疑问：
-
-用户线程和内核线程都可以通过scheduler调度，因此它们被划分为user context?
-
-hardirqs和syscall等异常是无法通过scheduler管理的，所以它们被划分为interrupt context?
-
-softirqs, tasklets又是什么情况呢？
-
-top程序中，统计负载时，只统计user context下的情况吗？（usr统计用户线程，sys统计内核线程）interrupt context下的情况都是怎么划分的呢？
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_a0454e74a9213414.png)
-
-### softirqs, tasklets
-
-
 
 Guide to hacking the Linux kernel 
 
