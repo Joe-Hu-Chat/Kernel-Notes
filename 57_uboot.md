@@ -6,7 +6,7 @@
 
 fastboot协议是一种通过USB或以太网（UDP）与**引导加载程序**通信的机制。它的设计非常简单，可以在各种设备和运行Linux，macOS或者Windows的主机上使用。实现的基本原理就是PC机通过fastboot协议与bootloader通信。
 
-android系统设计了2种刷机方式：fastboot和recovery。前者是镜像传输＋烧录，后者是通过恢复机制将新镜像作为备份来更新系统。uboot启动时手动进入命令行模式，再执行fastboot命令就可以进入fastboot模式，然后就可以与主机端的fastboot软件配合进行刷机。
+android系统设计了2种刷机方式：fastboot和recovery。前者是镜像传输＋烧录，后者是通过恢复机制将新镜像作为备份来更新系统。**uboot**启动时手动进入命令行模式，再执行fastboot命令就可以进入fastboot模式，然后就可以与主机端的fastboot软件配合进行刷机。
 
 
 

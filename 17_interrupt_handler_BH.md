@@ -168,7 +168,7 @@ work实际上是被直接插入到了pwq，接在**worklist**链表的末端。
 >
 > worker线程在哪里？它是如何工作的？
 >
-> 答：在wq子系统初始化时，由`workqueue_init`函数会为worker_pool创建相应的worker线程，在线程函数`worker_thread`中，会无限循环。在循环中，会检查worker_pool->worklist中是否有要完成的work。如果所有的work都完成了，就会进入sleep状态，让出CPU。`worker_pool`会自动增加其中的worker，以提高并发concurrency。
+> 答：在wq子系统初始化时，由`workqueue_init`函数会为worker_pool创建相应的worker线程，在线程函数`worker_thread`中，会无限循环。在循环中，会检查`worker_pool->worklist`中是否有要完成的work。如果所有的work都完成了，就会进入sleep状态，让出CPU。`worker_pool`会自动增加其中的worker，以提高并发concurrency。
 >
 > schedule_work和queue_work分别将work添加到内核默认wq和自定义wq，**那么workqueue是如何被worker线程执行的**？
 >

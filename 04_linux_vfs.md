@@ -128,9 +128,67 @@ struct file_operations {
 
 
 
+## Unified Interface
+
+It allows userspace applications to use standard system calls—such as `open()`, `read()`, and `write()`—regardless of the underlying storage medium or filesystem protocol.
+
+
+
+## Key Objects
+
+**Superblock**: Stores global information about a specific filesystem
+
+**Inode**: Represent a specific **file object** and its metadata (permissions, size, etc.).
+
+**Dentry**: Links a filename to an inode and is cached for fast path lookups.
+
+**File object**: Represents an open file in a specific process's context, tracking the current offest.
+
+
+
+# /dev
+
+
+
+Types of Device Files:
+
+Character Devices (`c`): Data is accessed as a stream of bytes (e.g., keyboards, mice)
+
+Block Device (`b`): Data is accessed in fixed-size blocks (e.g., hard dirves, USB sticks)
+
+Pseudo-Devices: Virtual interfaces that provide system services, such as `dev/null` (discard data), `/dev/zero` (provides null bytes), and `/dev/random` (generates entropy).
+
+
+
+Major/minor numbers:
+
+The major number tells the VFS which device driver handles a dev file.
+
+
+
+Devtmpfs: Modern Linux systems often mount a special filesystem called `devtmpfs` at `/dev`, which automatically creates and destroys these device nodes as hardware is added or removed.
+
+
+
+# procfs
+
+System and Process status information. Mostly used for process-specific data
+
+procfs是为了反映系统以及进程的状态信息**，**sysfs用于Linux设备驱动模型
+
+历史最早，最初就是用来跟内核交互的唯一方式，用来获取处理器、内存、设备驱动、进程等各种信息。
+
+
+
 # sysfs
 
 **sysfs** is a virtual filesystem in the Linux kernel that provides a standardized interface to expose kernel objects, their attributes, and relationships to user space. It is mounted at `/sys` and allows users and applications to query and **configure kernel subsystems, devices, and drivers** through virtual files.
+
+
+
+sysfs 跟 kobject 框架紧密联系，而 kobject 是为设备驱动模型而存在的，所以 sysfs 是为设备驱动服务的。
+
+**sysfs** is tightly integrated with the `kobject` system in the kernel. Each registered `kobject` creates a corresponding directory in `sysfs`, reflecting its parent-child hierarchy.
 
 
 
@@ -146,6 +204,16 @@ struct file_operations {
 
 
 
-## How sysfs Works
 
-**sysfs** is tightly integrated with the `kobject` system in the kernel. Each registered `kobject` creates a corresponding directory in `sysfs`, reflecting its parent-child hierarchy.
+
+# debugfs
+
+`sys/kernel/debug`
+
+Debugfs exists as a simple way for kernel developers to make information available to user space.
+
+debugfs也是一种用来调试内核的内存文件系统，内核开发者可以通过debugfs和用户空间交换数据
+
+
+
+debugfs 从名字来看就是为debug而生，所以更加灵活。
