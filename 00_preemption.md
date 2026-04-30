@@ -102,86 +102,6 @@ This scheduler called in this occasion loop between `ret_from_exception` and ret
 
 
 
-### CONFIG_PREEMPTION
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_be4e467c12347b83.png)
-
-PREEMPTION是由其它配置决定的，主要是PREEMT和ARCH_NO_PREEMPT，即硬件支不支持抢占。PREEMPT相当于**Preemptible Kernel**配置。PREEMPT_RT（realtime）如果支持的话，同样可以配置内核为抢占状态。
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_27a3232fe967822.png)
-
-总共有三个抢占模式：（可能还有实时模式）
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_6072330235ecee42.png)
-
-分别对应：
-
-CONFIG_PREEMPT_NONE					（非抢占，用于server）
-
-CONFIG_PREEMPT_VOLUNTARY			     （自愿抢占，桌面系统常用）
-
-CONFIG_PREEMPT -> CONFIG_PREEMPTION 	（抢占）
-
-
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_d60ce6166ec74fc.png)
-
-
-
-如果没有配置`CONFIG_PREEMPT`，则Linux内核将不会具有抢占功能。如果还没有配置`CONFIG_PREEMPT_VOLUNTARY`则函数`might_sleep()`将近似等于空函数，即不能调用`_cond_resched()`来调度其它任务。也就不具备自主出让CPU的能力，只能完全执行完当前程序退出后，才能出让CPU给其它任务。
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_37ebb6b4261b61f3.png)
-
-
-
-### `might_sleep()`
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_3aace2e55fb747ac.png)
-
-
-
-如果内核配置了PREEMPT功能，则也不再会包括具体的任务调度功能到`cond_resched()`函数中。
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_8bb0431c9b7530eb.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_e6bd5f3920e140fc.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_eae5ba6241cce88d.png)
-
-### `cond_resched()`
-
-用来在非抢占内核中，主动让出CPU以调度用户空间的程序。
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_817488f241460403.png)
-
-
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_656aa261614a2f3a.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_ded1676460eaf682.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_d5db2f5b266ee182.png)
-
-### `___might_sleep`
-
-主要作用：协助debug内核
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_1990d49e082591ed.png)
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_e343503ee303e57c.png)
-
-
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_af91a36d00fa9e8e.png)
-
-`___might_sleep`函数是用来debug内核的，如果不配置DEBUG_KERNEL则会被作为空函数编译：
-
-![img](./.00_preemption/lu1660747gsyto0_tmp_5d7ca75fb0f7e210.png)
-
-
-
-
-
 ## __schedule
 
 （`__schedule()`：主要的scheduler函数）
@@ -390,9 +310,112 @@ Guess:
 ![img](./.00_preemption/lu1660747gsyto0_tmp_c601f609b4ed265c.png)
 
 
+
 ## preemption mode
 
-Issues after substituding PREEMPT_LAZY for PREEMPT_NONE and PREEMPT_VOLUNTARY:
+
+
+### PREEMPT_FULL
+
+
+
+CONFIG_PREEMPTION
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_be4e467c12347b83.png)
+
+PREEMPTION是由其它配置决定的，主要是PREEMT和ARCH_NO_PREEMPT，即硬件支不支持抢占。PREEMPT相当于**Preemptible Kernel**配置。PREEMPT_RT（realtime）如果支持的话，同样可以配置内核为抢占状态。
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_27a3232fe967822.png)
+
+总共有三个抢占模式：（可能还有实时模式）
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_6072330235ecee42.png)
+
+分别对应：
+
+CONFIG_PREEMPT_NONE					（非抢占，用于server）
+
+CONFIG_PREEMPT_VOLUNTARY			     （自愿抢占，桌面系统常用）
+
+CONFIG_PREEMPT -> PREEMPTY_FULL         	（抢占）
+
+
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_d60ce6166ec74fc.png)
+
+
+
+### PREEMPT_VOLUNTARY
+
+Voluntary preemption mainly enables the `cond_resched()` calling, to balance high throughput and quick response. These `cond_resched()` callings create "explicit preemption points" in some long-run kernel paths to reduce rescheduling latency. This provides faster application reactions, at the cost of slightly lower throughput.
+
+
+
+如果没有配置`CONFIG_PREEMPT`，则Linux内核将不会具有抢占功能。如果还没有配置`CONFIG_PREEMPT_VOLUNTARY`则函数`might_sleep()`将近似等于空函数，即不能调用`_cond_resched()`来调度其它任务。也就不具备自主出让CPU的能力，只能完全执行完当前程序退出后，才能出让CPU给其它任务。
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_37ebb6b4261b61f3.png)
+
+
+
+#### `might_sleep()`
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_3aace2e55fb747ac.png)
+
+
+
+如果内核配置了PREEMPT功能，则也不再会包括具体的任务调度功能到`cond_resched()`函数中。
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_8bb0431c9b7530eb.png)
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_e6bd5f3920e140fc.png)
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_eae5ba6241cce88d.png)
+
+#### `cond_resched()`
+
+用来在非抢占内核中，主动让出CPU以调度用户空间的程序。
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_817488f241460403.png)
+
+
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_656aa261614a2f3a.png)
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_ded1676460eaf682.png)
+
+
+
+`CONFIG_PREEMPTION` means `PREEMPT_FULL`, which enables kernel preemption almost everywhere in kernel.
+
+Then, the `cond_resched()` used for `PREEMPT_VOLUNTARY` is not necessary.
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_d5db2f5b266ee182.png)
+
+#### `___might_sleep`
+
+主要作用：协助debug内核
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_1990d49e082591ed.png)
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_e343503ee303e57c.png)
+
+
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_af91a36d00fa9e8e.png)
+
+`___might_sleep`函数是用来debug内核的，如果不配置DEBUG_KERNEL则会被作为空函数编译：
+
+![img](./.00_preemption/lu1660747gsyto0_tmp_5d7ca75fb0f7e210.png)
+
+
+
+### PREEMPT_LAZY
+
+The lazy preemption mode mainly delays the normal urgency scheduling to next scheduling tick. This balances the throughput and responsiveness of the system.
+
+
+
+Issues after substituding `PREEMPT_LAZY` for `PREEMPT_NONE` and `PREEMPT_VOLUNTARY`:
 
 https://weinan.io/2026/04/08/linux-kernel-7-preempt-lazy-postgresql-performance.html
 
