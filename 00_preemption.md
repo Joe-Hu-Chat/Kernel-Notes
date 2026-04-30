@@ -480,6 +480,36 @@ signed long __sched schedule_timeout(signed long timeout)
 EXPORT_SYMBOL(schedule_timeout);
 ```
 
+## preemption mode
+
+What we found is:
+
+  - PREEMPT_LAZY is not directly “breaking” a PostgreSQL user-space spinlock. The direct return-to-user behavior is not the issue.
+  - The likely difference versus PREEMPT_VOLUNTARY is that VOLUNTARY had explicit kernel preemption points, and when execution happened to pass through one of those points, the scheduler could switch immediately. The kernel help text says exactly that: PREEMPT_VOLUNTARY
+    reduces latency by adding more “explicit preemption points” in kernel code. (github.com (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+  - PREEMPT_LAZY is intentionally less eager. It favors deferring some normal-task reschedules instead of switching at the earliest opportunity. That means a thread that needs CPU to release a contended user-space lock may get it slightly later, but only indirectly thr
+    ough changed kernel scheduling timing. (github.com (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+  - PostgreSQL’s spinlock design is sensitive to exactly that kind of delay, because its own docs say spinlocks are only appropriate for “a few dozen instructions” and explicitly not across kernel calls. Once the holder is delayed, waiters waste CPU and contention costs
+    rise quickly. (github.com (https://github.com/postgres/postgres/blob/master/src/backend/storage/lmgr/README))
+
+  So your hypothesis is the right one:
+
+  PostgreSQL may have been benefiting from incidental cond_resched-style handoff opportunities in kernel paths it frequently exercised, and PREEMPT_LAZY removes or weakens that benefit by being less eager than PREEMPT_VOLUNTARY. (github.com
+  (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+
+  Two refinements matter:
+
+  - PREEMPT_VOLUNTARY was not designed for PostgreSQL’s spinlocks specifically. Its goal was general kernel latency reduction for desktop-style interactivity, not protecting user-space lock holders. (github.com
+    (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+  - The “benefit” is likely workload- and path-dependent. To claim it confidently for a given PostgreSQL setup, you would need tracing that shows backends frequently entering kernel paths containing voluntary reschedule points at the moments where lock-holder progress
+    matters. Without that evidence, it remains a plausible mechanism, not a proven root cause. (github.com (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+
+  The shortest summary is:
+
+  PREEMPT_VOLUNTARY may have accidentally helped PostgreSQL under contention because explicit kernel reschedule points sometimes handed CPU to the useful backend sooner. PREEMPT_LAZY is less eager, so that accidental help can disappear, making PostgreSQL’s already frag
+  ile short-spin design look worse.` (github.com (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
+
+  If you want, I can turn that into a concrete “likely kernel paths” checklist for PostgreSQL backends, such as sleep/backoff, page faults, buffer I/O, wakeups, and memory allocation paths where cond_resched() could plausibly matter.
 
 
 # Others
