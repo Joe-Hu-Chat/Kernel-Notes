@@ -392,6 +392,10 @@ Guess:
 
 ## preemption mode
 
+Issues after substituding PREEMPT_LAZY for PREEMPT_NONE and PREEMPT_VOLUNTARY:
+
+https://weinan.io/2026/04/08/linux-kernel-7-preempt-lazy-postgresql-performance.html
+
 What we found is:
 
   - PREEMPT_LAZY is not directly “breaking” a PostgreSQL user-space spinlock. The direct return-to-user behavior is not the issue.
