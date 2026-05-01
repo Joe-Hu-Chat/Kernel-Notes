@@ -80,7 +80,7 @@ assembler directive: `.set`
 
 ![image-20250326224318917](./.00_preemption/image-20250326224318917.png)
 
-If the `thread_info.preempt_count` is not zero, preemption is not allowed, i.e., it will restore the previous context and continue what has been interrupted.
+If the `thread_info.preempt_count` is **not** zero, preemption is not allowed, i.e., it will restore the previous context and continue what has been interrupted.
 
 
 
@@ -92,7 +92,7 @@ This scheduler called in this occasion loop between `ret_from_exception` and ret
 
 
 
-### preempt_count()
+#### preempt_count()
 
 ![img](./.00_preemption/lu1660747gsyto0_tmp_1e328d73bc45f56c.png)
 
@@ -345,7 +345,25 @@ CONFIG_PREEMPT -> PREEMPTY_FULL         	（抢占）
 
 
 
+### PREEMPT_RT
+
+PREEMPT_RT is like PREEMPT_FULL except there's a lot of changes to  minimize the situation where the kernel is in a non-preemptable state,  in order to minimize latency, at a much bigger cost in throughput  performance.
+
+
+
+
+
+### PREEMPT_NONE
+
+No kernel preemption will happen. The only way to schedule a process running in kernel mode, is it explicitly calls the scheduling function `schedule()`.
+
+(Need to confirm the statement above)
+
+
+
 ### PREEMPT_VOLUNTARY
+
+Basically speaking, PREEMPT_VOLUNTARY mode is a variant of "none preemption", which sparkles some voluntary rescheduling points around the kernel, in the presummably long-run paths.
 
 Voluntary preemption mainly enables the `cond_resched()` calling, to balance high throughput and quick response. These `cond_resched()` callings create "explicit preemption points" in some long-run kernel paths to reduce rescheduling latency. This provides faster application reactions, at the cost of slightly lower throughput.
 
@@ -411,6 +429,10 @@ Then, the `cond_resched()` used for `PREEMPT_VOLUNTARY` is not necessary.
 
 ### PREEMPT_LAZY
 
+Basically speaking, the PREEMPTY_LAZY mode is a variant of "normal preemption" type, restricting the preemption to the time points of scheduler ticks. This way, it avoids too much rescheduling(i.e., context switch overhead) in one timeslice(a tick period), and on the other side adds some finite delays, normally `TICK_NSEC / 2` time.
+
+
+
 The lazy preemption mode mainly delays the normal urgency scheduling to next scheduling tick. This balances the throughput and responsiveness of the system.
 
 
@@ -447,6 +469,78 @@ What we found is:
   ile short-spin design look worse.` (github.com (https://github.com/torvalds/linux/blob/master/kernel/Kconfig.preempt))
 
   If you want, I can turn that into a concrete “likely kernel paths” checklist for PostgreSQL backends, such as sleep/backoff, page faults, buffer I/O, wakeups, and memory allocation paths where cond_resched() could plausibly matter.
+
+
+
+#### sched_tick
+
+![image-20260501224835527](/home/joe/.config/Typora/typora-user-images/image-20260501224835527.png)
+
+![image-20260501225021814](/home/joe/.config/Typora/typora-user-images/image-20260501225021814.png)
+
+
+
+## resched_curr
+
+**Mark** rq's current task 'to be rescheduled now'
+
+![image-20260501194103258](/home/joe/.config/Typora/typora-user-images/image-20260501194103258.png)
+
+
+
+![image-20260501194238315](/home/joe/.config/Typora/typora-user-images/image-20260501194238315.png)
+
+
+
+### wakeup_preempt
+
+![image-20260501233914069](/home/joe/.config/Typora/typora-user-images/image-20260501233914069.png)
+
+
+
+
+
+## resched_curr_lazy
+
+
+
+![image-20260501194151538](/home/joe/.config/Typora/typora-user-images/image-20260501194151538.png)
+
+
+
+### wakeup_preempt_fair
+
+![image-20260501204804555](/home/joe/.config/Typora/typora-user-images/image-20260501204804555.png)
+
+![image-20260501204932535](/home/joe/.config/Typora/typora-user-images/image-20260501204932535.png)
+
+![image-20260501205010815](/home/joe/.config/Typora/typora-user-images/image-20260501205010815.png)
+
+![image-20260501205129697](/home/joe/.config/Typora/typora-user-images/image-20260501205129697.png)
+
+
+
+### update_curr
+
+This is in the fair sched class. The lazy flag will be **delayed** to next `shed_tick()`, where the `TIF_NEED_RESCHED_LAZY` is evaluated as `TIF_NEED_RESCHED`.
+
+Then, the `schedule()` will be called to do scheduling, if seeing `TIF_NEED_RESCHED` flag
+
+
+
+![image-20260501223147221](/home/joe/.config/Typora/typora-user-images/image-20260501223147221.png)
+
+
+
+![image-20260501222215183](/home/joe/.config/Typora/typora-user-images/image-20260501222215183.png)
+
+![image-20260501222341658](/home/joe/.config/Typora/typora-user-images/image-20260501222341658.png)
+
+
+
+#### Fair sched
+
+![image-20260501222958538](/home/joe/.config/Typora/typora-user-images/image-20260501222958538.png)
 
 
 
